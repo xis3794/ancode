@@ -103,75 +103,71 @@ class LlmClient(
             .post(body)
             .build()
 
-        try {
-            val response = client.newCall(request).execute()
-            if (!response.isSuccessful) {
-                val errBody = response.body?.string().orEmpty()
-                emit(Delta.Error(parseApiError(response.code, errBody)))
-                return@flow
-            }
-            streamResponse(response) { emit(it) }
+        val response = try {
+            client.newCall(request).execute()
         } catch (e: Exception) {
             emit(Delta.Error(e.message ?: "Network error"))
+            return@flow
         }
-    }.flowOn(Dispatchers.IO)
 
-    private suspend fun streamResponse(response: Response, emit: suspend (Delta) -> Unit) {
-        suspendCancellableCoroutine { cont ->
-            val source = response.body?.source()
-            if (source == null) {
-                emit(Delta.Error("Empty response body"))
-                return@suspendCancellableCoroutine
-            }
-            val toolFragments = HashMap<Int, MutableList<String>>() // index -> argument chunks
-            val toolIds = HashMap<Int, String>()
-            val toolNames = HashMap<Int, String>()
+        if (!response.isSuccessful) {
+            val errBody = response.body?.string().orEmpty()
+            emit(Delta.Error(parseApiError(response.code, errBody)))
+            response.close()
+            return@flow
+        }
 
-            try {
-                while (!cont.isCancelled) {
-                    val line = source.readUtf8Line() ?: break
-                    if (line.isEmpty()) continue
-                    val data = line.removePrefix("data:").trim()
-                    if (data.isEmpty()) continue
-                    if (data == "[DONE]") {
-                        emit(Delta.Done(null))
-                        break
-                    }
-                    try {
-                        val chunk = json.decodeFromString(ChatChunk.serializer(), data)
-                        for (choice in chunk.choices) {
-                            val delta = choice.delta
-                            delta.content?.let { emit(Delta.Text(it)) }
-                            delta.toolCalls?.let { tcs ->
-                                for (tc in tcs) {
-                                    val idx = tc.index
-                                    val id = tc.id
-                                    val name = tc.function?.name
-                                    val argDelta = tc.function?.arguments
-                                    if (id != null) toolIds[idx] = id
-                                    if (name != null) toolNames[idx] = name
-                                    if (argDelta != null) {
-                                        toolFragments.getOrPut(idx) { mutableListOf() }.add(argDelta)
-                                    }
-                                    emit(Delta.ToolCallFragment(idx, toolIds[idx], toolNames[idx], argDelta))
-                                }
-                            }
-                            if (choice.finishReason != null) {
-                                emit(Delta.Done(choice.finishReason))
+        val source = response.body?.source()
+        if (source == null) {
+            emit(Delta.Error("Empty response body"))
+            response.close()
+            return@flow
+        }
+
+        // Accumulate tool-call fragments by index (streamed arguments arrive in chunks).
+        val toolIds = HashMap<Int, String>()
+        val toolNames = HashMap<Int, String>()
+
+        try {
+            while (true) {
+                val line = source.readUtf8Line() ?: break
+                if (line.isEmpty()) continue
+                val data = line.removePrefix("data:").trim()
+                if (data.isEmpty()) continue
+                if (data == "[DONE]") {
+                    emit(Delta.Done(null))
+                    break
+                }
+                try {
+                    val chunk = json.decodeFromString(ChatChunk.serializer(), data)
+                    for (choice in chunk.choices) {
+                        val delta = choice.delta
+                        if (delta.content != null) {
+                            emit(Delta.Text(delta.content))
+                        }
+                        val tcs = delta.toolCalls
+                        if (tcs != null) {
+                            for (tc in tcs) {
+                                val idx = tc.index
+                                if (tc.id != null) toolIds[idx] = tc.id
+                                if (tc.function?.name != null) toolNames[idx] = tc.function!!.name
+                                emit(Delta.ToolCallFragment(idx, toolIds[idx], toolNames[idx], tc.function?.arguments))
                             }
                         }
-                    } catch (e: Exception) {
-                        // malformed chunk: skip
+                        if (choice.finishReason != null) {
+                            emit(Delta.Done(choice.finishReason))
+                        }
                     }
+                } catch (e: Exception) {
+                    // malformed chunk: skip
                 }
-            } catch (e: Exception) {
-                if (!cont.isCancelled) emit(Delta.Error(e.message ?: "Stream error"))
-            } finally {
-                response.close()
-                if (cont.isActive) cont.resume(Unit)
             }
+        } catch (e: Exception) {
+            emit(Delta.Error(e.message ?: "Stream error"))
+        } finally {
+            response.close()
         }
-    }
+    }.flowOn(Dispatchers.IO)
 
     private fun parseApiError(code: Int, body: String): String {
         val friendly = when (code) {
