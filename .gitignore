@@ -1,0 +1,27 @@
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+*.apk
+*.aab
+!gradle/wrapper/gradle-wrapper.jar
+
+# Ancode runtime artifacts (never commit downloaded rootfs)
+app/src/main/assets/linux/*.tar.gz
+
+# Template leftovers (not needed for cloud builds)
+.backup/
+tools/
+setup_android_env.sh
+.operit/
