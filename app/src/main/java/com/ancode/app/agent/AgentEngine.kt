@@ -157,6 +157,7 @@ class AgentEngine(
         val toolCallAcc = LinkedHashMap<Int, StringBuilder>() // index -> args
         val toolIdAcc = HashMap<Int, String>()
         val toolNameAcc = HashMap<Int, String>()
+        var failed: String? = null
 
         try {
             llm.chat(full, registry.toApiTools()).collect { delta ->
@@ -174,15 +175,16 @@ class AgentEngine(
                     }
                     is LlmClient.Delta.Done -> Unit
                     is LlmClient.Delta.Error -> {
+                        failed = delta.message
                         onEvent(Event.Error(delta.message))
-                        return null
                     }
                 }
             }
         } catch (e: Exception) {
-            onEvent(Event.Error(e.message ?: "请求失败"))
-            return null
+            failed = e.message ?: "请求失败"
+            onEvent(Event.Error(failed ?: "请求失败"))
         }
+        if (failed != null) return null
 
         val toolCalls = toolCallAcc.entries.sortedBy { it.key }.map { (idx, argsSb) ->
             AssistantToolCall(

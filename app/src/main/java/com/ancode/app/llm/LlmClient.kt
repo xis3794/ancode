@@ -137,7 +137,7 @@ class LlmClient(
                         emit(Delta.Done(null))
                         break
                     }
-                    runCatching {
+                    try {
                         val chunk = json.decodeFromString(ChatChunk.serializer(), data)
                         chunk.choices.forEach { choice ->
                             val delta = choice.delta
@@ -158,6 +158,8 @@ class LlmClient(
                                 emit(Delta.Done(choice.finishReason))
                             }
                         }
+                    } catch (e: Exception) {
+                        // malformed chunk: skip
                     }
                 }
             } catch (e: Exception) {

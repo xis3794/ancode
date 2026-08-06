@@ -22,6 +22,6 @@ app/src/main/assets/linux/*.tar.gz
 
 # Template leftovers (not needed for cloud builds)
 .backup/
-tools/
+/tools/
 setup_android_env.sh
 .operit/

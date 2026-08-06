@@ -22,7 +22,7 @@ class SessionStore(private val context: Context) {
         dir.mkdirs()
     }
 
-    fun newSession(title: String = "新会话"): Session {
+    suspend fun newSession(title: String = "新会话"): Session {
         val s = Session(id = UUID.randomUUID().toString(), title = title)
         save(s)
         return s

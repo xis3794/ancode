@@ -26,7 +26,9 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
@@ -54,6 +56,7 @@ private enum class Tab(val label: String, val icon: ImageVector) {
 fun AncodeApp(viewModel: AppViewModel) {
     var tab by remember { mutableStateOf(Tab.CHAT) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
     val todos by viewModel.todos.collectAsState()
 
     ModalNavigationDrawer(
@@ -84,7 +87,7 @@ fun AncodeApp(viewModel: AppViewModel) {
                         )
                     },
                     navigationIcon = {
-                        androidx.compose.material3.IconButton(onClick = { drawerState.open() }) {
+                        androidx.compose.material3.IconButton(onClick = { scope.launch { drawerState.open() } }) {
                             Icon(
                                 Icons.Filled.Checklist,
                                 contentDescription = "Do List",
