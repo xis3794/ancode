@@ -153,7 +153,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Probe + prepare projects dir; returns probe output for the UI. */
     suspend fun probeLinux(): String {
         if (!rootfs.isReady()) return "Linux 环境未安装"
-        rootfs.ensureProjectsDir()
+        runner.ensureProjectsDir()
         return runner.probe()
     }
 

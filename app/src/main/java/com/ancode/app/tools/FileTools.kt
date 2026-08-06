@@ -22,8 +22,7 @@ class ReadTool(private val rootfs: RootfsManager) : Tool {
 
     override suspend fun execute(args: Map<String, Any?>): String {
         val path = args["path"]?.toString() ?: return "错误：缺少 path"
-        val host = rootfs.guestToHost(path) ?: return "错误：不支持的路径（/sdcard 请用 terminal 工具）"
-        val f = File(host)
+        val f = rootfs.guestToHost(path) ?: return "错误：不支持的路径（/sdcard 请用 terminal 工具）"
         if (!f.exists()) return "错误：文件不存在: $path"
         if (f.isDirectory) return "错误：$path 是目录，请用 terminal 的 ls 查看"
         val offset = (args["offset"] as? Number)?.toInt() ?: 1
@@ -52,8 +51,7 @@ class WriteTool(private val rootfs: RootfsManager) : Tool {
     override suspend fun execute(args: Map<String, Any?>): String {
         val path = args["path"]?.toString() ?: return "错误：缺少 path"
         val content = args["content"]?.toString() ?: return "错误：缺少 content"
-        val host = rootfs.guestToHost(path) ?: return "错误：不支持的路径（/sdcard 请用 terminal 工具）"
-        val f = File(host)
+        val f = rootfs.guestToHost(path) ?: return "错误：不支持的路径（/sdcard 请用 terminal 工具）"
         f.parentFile?.mkdirs()
         f.writeText(content)
         return "已写入 ${f.length()} 字节 -> $path"
@@ -76,8 +74,7 @@ class EditTool(private val rootfs: RootfsManager) : Tool {
 
     override suspend fun execute(args: Map<String, Any?>): String {
         val path = args["path"]?.toString() ?: return "错误：缺少 path"
-        val host = rootfs.guestToHost(path) ?: return "错误：不支持的路径（/sdcard 请用 terminal 工具）"
-        val f = File(host)
+        val f = rootfs.guestToHost(path) ?: return "错误：不支持的路径（/sdcard 请用 terminal 工具）"
         if (!f.exists()) return "错误：文件不存在: $path"
         val text = f.readText()
 

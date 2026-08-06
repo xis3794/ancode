@@ -1,6 +1,9 @@
 package com.ancode.app.tools
 
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 
 /**
  * A tool the agent can invoke. JSON Schema for parameters is generated from

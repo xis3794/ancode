@@ -139,20 +139,22 @@ class LlmClient(
                     }
                     try {
                         val chunk = json.decodeFromString(ChatChunk.serializer(), data)
-                        chunk.choices.forEach { choice ->
+                        for (choice in chunk.choices) {
                             val delta = choice.delta
                             delta.content?.let { emit(Delta.Text(it)) }
-                            delta.toolCalls?.forEach { tc ->
-                                val idx = tc.index
-                                val id = tc.id
-                                val name = tc.function?.name
-                                val argDelta = tc.function?.arguments
-                                if (id != null) toolIds[idx] = id
-                                if (name != null) toolNames[idx] = name
-                                if (argDelta != null) {
-                                    toolFragments.getOrPut(idx) { mutableListOf() }.add(argDelta)
+                            delta.toolCalls?.let { tcs ->
+                                for (tc in tcs) {
+                                    val idx = tc.index
+                                    val id = tc.id
+                                    val name = tc.function?.name
+                                    val argDelta = tc.function?.arguments
+                                    if (id != null) toolIds[idx] = id
+                                    if (name != null) toolNames[idx] = name
+                                    if (argDelta != null) {
+                                        toolFragments.getOrPut(idx) { mutableListOf() }.add(argDelta)
+                                    }
+                                    emit(Delta.ToolCallFragment(idx, toolIds[idx], toolNames[idx], argDelta))
                                 }
-                                emit(Delta.ToolCallFragment(idx, toolIds[idx], toolNames[idx], argDelta))
                             }
                             if (choice.finishReason != null) {
                                 emit(Delta.Done(choice.finishReason))
