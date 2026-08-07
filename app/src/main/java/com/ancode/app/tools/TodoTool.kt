@@ -41,7 +41,7 @@ class TodoTool(
                 val text = content ?: return "错误：ADD 需要 content"
                 val item = TodoItem(UUID.randomUUID().toString().take(8), text)
                 if (index != null && index in 0..items.size) items.add(index, item) else items.add(item)
-                notify()
+                notifyUpdate()
                 "已添加任务 #${items.indexOf(item)}: $text"
             }
             TodoOp.UPDATE -> {
@@ -49,19 +49,19 @@ class TodoTool(
                 val text = content ?: return "错误：UPDATE 需要 content"
                 val idx = items.indexOf(target)
                 items[idx] = target.copy(content = text)
-                notify()
+                notifyUpdate()
                 "已更新任务 #$idx: $text"
             }
             TodoOp.MARK_DONE -> {
                 val target = locate(index, id) ?: return "错误：任务不存在（index=$index id=$id）"
                 val idx = items.indexOf(target)
                 items[idx] = target.copy(done = !target.done)
-                notify()
+                notifyUpdate()
                 "任务 #$idx 标记为 ${if (items[idx].done) "完成" else "未完成"}"
             }
             TodoOp.CLEAR -> {
                 items.clear()
-                notify()
+                notifyUpdate()
                 "已清空待办清单"
             }
         }
@@ -73,7 +73,7 @@ class TodoTool(
         return null
     }
 
-    private fun notify() {
+    private fun notifyUpdate() {
         onUpdate(items.toList())
     }
 
@@ -82,6 +82,6 @@ class TodoTool(
     fun restore(list: List<TodoItem>) {
         items.clear()
         items.addAll(list)
-        notify()
+        notifyUpdate()
     }
 }
