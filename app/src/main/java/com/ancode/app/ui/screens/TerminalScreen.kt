@@ -133,13 +133,27 @@ fun TerminalScreen(
                         color = TextPrimary
                     )
                 }
-                // input echo line
-                Text(
-                    "$ ${input}▍",
-                    fontSize = 12.sp,
-                    lineHeight = 15.sp,
-                    color = TextPrimary
-                )
+                // input echo line with colorized PS1 (terminal highlighting)
+                Row {
+                    Text(
+                        "ubuntu@ancode",
+                        fontSize = 12.sp,
+                        lineHeight = 15.sp,
+                        color = Color(0xFF22C55E)
+                    )
+                    Text(
+                        ":~",
+                        fontSize = 12.sp,
+                        lineHeight = 15.sp,
+                        color = Color(0xFF3B82F6)
+                    )
+                    Text(
+                        "$ ${input}▍",
+                        fontSize = 12.sp,
+                        lineHeight = 15.sp,
+                        color = TextPrimary
+                    )
+                }
             }
         }
 

@@ -104,4 +104,6 @@ dependencies {
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
+    // MTDataFilesProvider: MT 管理器免 ROOT 浏览应用私有目录（debug 版注入）
+    debugImplementation("com.github.L-JINBIN:MTDataFilesProvider:v1.0.0")
 }

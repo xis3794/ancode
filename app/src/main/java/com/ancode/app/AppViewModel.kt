@@ -177,7 +177,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun runAgent() {
         if (_isRunning.value) return
         val cfg = settings.llmConfig()
-        if (cfg.apiKey.isBlank() && !cfg.baseUrl.contains("10.0.2.2") && !cfg.baseUrl.contains("localhost")) {
+        val isLocal = cfg.baseUrl.contains("10.0.2.2") || cfg.baseUrl.contains("localhost") || cfg.baseUrl.contains("127.0.0.1")
+        if (cfg.apiKey.isBlank() && !isLocal) {
             appendMessage(ChatMessage(role = Role.ASSISTANT, content = "⚠️ 尚未配置 API Key。请前往「设置」填写 API Key（支持 DeepSeek / OpenAI / 通义 / 智谱 / Ollama 等 OpenAI 兼容接口）。"))
             persist()
             return
@@ -261,9 +262,28 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- settings ----
 
-    fun saveSettings(baseUrl: String, apiKey: String, model: String, workingDir: String) {
+    /** Upsert a provider profile (empty id = create new). */
+    fun saveProvider(profile: com.ancode.app.settings.ProviderProfile, makeActive: Boolean = false) {
         viewModelScope.launch {
-            settings.update(baseUrl = baseUrl, apiKey = apiKey, model = model, workingDir = workingDir)
+            settings.upsertProvider(profile, makeActive)
+        }
+    }
+
+    fun deleteProvider(id: String) {
+        viewModelScope.launch {
+            settings.deleteProvider(id)
+        }
+    }
+
+    fun setActiveProvider(id: String) {
+        viewModelScope.launch {
+            settings.setActiveProvider(id)
+        }
+    }
+
+    fun saveWorkingDir(dir: String) {
+        viewModelScope.launch {
+            settings.update(workingDir = dir)
         }
     }
 

@@ -23,6 +23,7 @@ dependencyResolutionManagement {
         maven("https://maven.aliyun.com/repository/central")
         maven("https://maven.aliyun.com/repository/public")
         maven("https://repo.huaweicloud.com/repository/maven/")
+        maven("https://jitpack.io")
         google()
         mavenCentral()
     }

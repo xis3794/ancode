@@ -33,10 +33,25 @@ class RootfsManager(private val context: Context) {
         const val UBUNTU_VERSION = "24.04.3"
         const val ROOTFS_FILENAME = "ubuntu-base-24.04.3-base-arm64.tar.gz"
         const val ROOTFS_SHA256 = "7b2dced6dd56ad5e4a813fa25c8de307b655fdabc6ea9213175a92c48dabb048"
+
+        /**
+         * Download mirrors, best first. (2026-08 verified: cdimage + aliyun OK,
+         * tuna/ustc return 403, sjtu/netease 404 — removed.)
+         * Both the "24.04" and "24.04.3" release dirs are tried since mirrors
+         * differ in layout.
+         */
         val MIRRORS = listOf(
-            "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/$ROOTFS_FILENAME",
-            "https://mirrors.tuna.tsinghua.edu.cn/ubuntu-cdimage/ubuntu-base/releases/24.04/release/$ROOTFS_FILENAME",
-            "https://mirrors.aliyun.com/ubuntu-cdimage/ubuntu-base/releases/24.04/release/$ROOTFS_FILENAME"
+            "https://mirrors.aliyun.com/ubuntu-cdimage/ubuntu-base/releases/24.04.3/release/$ROOTFS_FILENAME",
+            "https://mirrors.aliyun.com/ubuntu-cdimage/ubuntu-base/releases/24.04/release/$ROOTFS_FILENAME",
+            "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04.3/release/$ROOTFS_FILENAME",
+            "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04/release/$ROOTFS_FILENAME"
+        )
+
+        /** Optional manual import path checked before any network download. */
+        val MANUAL_IMPORT_PATHS = listOf(
+            "/sdcard/Download/$ROOTFS_FILENAME",
+            "/sdcard/Download/ubuntu-base-24.04.3-base-arm64.tar.gz",
+            "/storage/emulated/0/Download/$ROOTFS_FILENAME"
         )
     }
 
@@ -45,6 +60,8 @@ class RootfsManager(private val context: Context) {
 
     val linuxDir: File = File(context.filesDir, "linux")
     val rootfsDir: File = File(linuxDir, "rootfs")
+    /** Host-side workspace (guest /root/projects is bind-mounted to this). */
+    val workspaceHostDir: File = File(context.filesDir, "projects")
     val prootBin: File = File(linuxDir, "bin/proot")
     val prootLibDir: File = File(linuxDir, "lib")
     val prootLoaderDir: File = File(linuxDir, "libexec/proot")
@@ -56,11 +73,23 @@ class RootfsManager(private val context: Context) {
         else -> _state.value.status
     }
 
-    /** Map a guest path (/root/...) onto the host rootfs path. Null for /sdcard (handled via proot). */
+    /**
+     * Map a guest path onto the host filesystem.
+     *  - /root/projects (workspace) → /sdcard/Ancode/projects (bind-mounted)
+     *  - /root/... (home) → rootfs/root/...
+     *  - other /... → rootfs/...
+     *  - /sdcard, /storage → null (they already exist on the host; tools
+     *    should use the terminal for them, since file access via Java File
+     *    requires storage permission).
+     */
     fun guestToHost(guestPath: String): File? {
         val p = guestPath.trim()
         return when {
             p.startsWith("/sdcard") || p.startsWith("/storage") -> null
+            p == "/root/projects" || p.startsWith("/root/projects/") -> {
+                val rel = p.removePrefix("/root/projects").trimStart('/')
+                File(workspaceHostDir, rel)
+            }
             p.startsWith("/") -> File(rootfsDir, p.removePrefix("/"))
             else -> File(rootfsDir, p)
         }
@@ -127,20 +156,36 @@ class RootfsManager(private val context: Context) {
         linuxDir.mkdirs()
         val tarFile = File(linuxDir, ROOTFS_FILENAME)
 
-        // 1. Download (skip if already present & verified)
+        // 1. Obtain tarball: manual import (if user placed one in Download) OR download
         if (tarFile.exists() && !sha256(tarFile).equals(ROOTFS_SHA256, ignoreCase = true)) {
             tarFile.delete()
         }
         if (!tarFile.exists()) {
-            _state.value = State(Status.DOWNLOADING, 0f, "正在下载 Ubuntu base $UBUNTU_VERSION...")
-            var downloaded = false
-            for (mirror in MIRRORS) {
-                downloaded = downloadWithProgress(mirror, tarFile) { p -> onProgress(p * 0.85f) }
-                if (downloaded) break
-            }
-            if (!downloaded) {
-                _state.value = State(Status.ERROR, 0f, error = "rootfs 下载失败（所有镜像不可用）")
-                return false
+            // 1a. manual import from a well-known location (user downloaded it themselves)
+            val imported = withContext(Dispatchers.IO) { tryImportFromDownload() }
+            if (imported != null) {
+                imported.copyTo(tarFile, overwrite = true)
+                imported.delete()
+                _state.value = State(Status.DOWNLOADING, 0.9f, "已导入本地 rootfs 文件，校验中...")
+            } else {
+                // 1b. network download from mirrors
+                _state.value = State(Status.DOWNLOADING, 0f, "正在下载 Ubuntu base $UBUNTU_VERSION...")
+                val errors = StringBuilder()
+                var downloaded = false
+                for (mirror in MIRRORS) {
+                    val reason = downloadWithProgress(mirror, tarFile) { p -> onProgress(p * 0.85f) }
+                    if (reason == null) { downloaded = true; break }
+                    errors.append("\n• ").append(mirror).append(" → ").append(reason)
+                }
+                if (!downloaded) {
+                    _state.value = State(
+                        Status.ERROR, 0f,
+                        error = "rootfs 下载失败（所有镜像不可用）：$errors\n\n" +
+                            "请手动下载 $ROOTFS_FILENAME（约28MB）放到 /sdcard/Download/ 后重新安装：" +
+                            "\nhttps://mirrors.aliyun.com/ubuntu-cdimage/ubuntu-base/releases/24.04.3/release/"
+                    )
+                    return false
+                }
             }
         }
 
@@ -171,16 +216,36 @@ class RootfsManager(private val context: Context) {
         return true
     }
 
-    private fun downloadWithProgress(url: String, dest: File, onProgress: (Float) -> Unit): Boolean {
+    /** Look for a manually downloaded tarball in well-known public locations. */
+    private fun tryImportFromDownload(): File? {
+        for (p in MANUAL_IMPORT_PATHS) {
+            val f = File(p)
+            if (f.exists() && f.length() > 1_000_000) return f
+        }
+        return null
+    }
+
+    /**
+     * Download [url] to [dest]. Returns null on success, or a human-readable
+     * failure reason on error (HTTP code / exception message).
+     */
+    private fun downloadWithProgress(url: String, dest: File, onProgress: (Float) -> Unit): String? {
         return try {
             val client = OkHttpClient.Builder()
-                .connectTimeout(20, TimeUnit.SECONDS)
-                .readTimeout(60, TimeUnit.SECONDS)
+                .connectTimeout(25, TimeUnit.SECONDS)
+                .readTimeout(90, TimeUnit.SECONDS)
+                .retryOnConnectionFailure(true)
                 .build()
-            val request = Request.Builder().url(url).build()
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", "Mozilla/5.0 (Linux; Android 14) Ancode/0.1")
+                .header("Accept", "*/*")
+                .build()
             client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return false
-                val body = response.body ?: return false
+                if (!response.isSuccessful) {
+                    return "HTTP ${response.code}"
+                }
+                val body = response.body ?: return "空响应"
                 val total = body.contentLength()
                 val input = body.byteStream()
                 FileOutputStream(dest).use { output ->
@@ -194,46 +259,148 @@ class RootfsManager(private val context: Context) {
                     }
                 }
             }
-            true
+            null
         } catch (e: Exception) {
             dest.delete()
-            false
+            e.message ?: e.javaClass.simpleName
         }
     }
 
     /**
-     * Extract the rootfs tarball by running tar *inside* the proot environment.
-     * This preserves symlinks/ownership correctly and avoids a pure-Java tar
-     * implementation. The tarball is bind-mounted into the guest as
-     * /host-rootfs.tar.gz.
+     * Extract the rootfs tarball with a pure-Java tar.gz reader.
+     * (The previous proot-based extraction was fundamentally broken: it tried to
+     * run /bin/sh inside an *empty* rootfs, which cannot work. Java extraction
+     * handles GNU tar entries incl. symlinks and long names, and is fast enough
+     * for the 28MB tarball.)
      */
     private fun extractTarGz(tar: File, destDir: File): Boolean {
         return try {
             destDir.mkdirs()
-            val cmd = listOf(
-                prootBin.absolutePath,
-                "-0",
-                "-r", rootfsDir.absolutePath,
-                "-b", "${tar.absolutePath}:/host-rootfs.tar.gz",
-                "-b", "/proc",
-                "-b", "/dev",
-                "-w", "/",
-                "/bin/sh", "-c",
-                "tar xzf /host-rootfs.tar.gz -C / && " +
-                    "chmod 755 / /root /tmp /var /var/tmp /etc /bin /usr /usr/bin /usr/sbin 2>/dev/null; true"
-            )
-            val pb = ProcessBuilder(cmd)
-            pb.redirectErrorStream(true)
-            val proc = pb.start()
-            val output = proc.inputStream.bufferedReader().readText()
-            val exit = proc.waitFor()
-            if (exit != 0) {
-                android.util.Log.e("RootfsManager", "extract failed: $output")
+            val symlinks = mutableListOf<Pair<File, String>>()
+            var count = 0
+            java.util.zip.GZIPInputStream(tar.inputStream()).use { gz ->
+                var pendingName: String? = null
+                var pendingLink: String? = null
+                while (true) {
+                    val header = ByteArray(512)
+                    var off = 0
+                    while (off < 512) {
+                        val n = gz.read(header, off, 512 - off)
+                        if (n < 0) break
+                        off += n
+                    }
+                    if (off < 512) break // EOF (padding zeros)
+                    if (header.all { it == 0.toByte() }) {
+                        // skip second zero block then stop
+                        skipFully(gz, 512)
+                        break
+                    }
+                    val name = parseTarString(header, 0, 100)
+                    val type = header[156].toInt().toChar()
+                    val size = parseOctal(header, 124, 12)
+                    val linkName = parseTarString(header, 157, 100)
+                    val prefix = parseTarString(header, 345, 155)
+                    val fullName = if (prefix.isNotEmpty()) "$prefix/$name" else name
+
+                    // GNU long name extension
+                    if (type == 'L') {
+                        pendingName = readLongName(gz, size)
+                        skipFully(gz, blockAlign(size))
+                        continue
+                    }
+                    if (type == 'K') {
+                        pendingLink = readLongName(gz, size)
+                        skipFully(gz, blockAlign(size))
+                        continue
+                    }
+
+                    val targetName = pendingName ?: fullName
+                    pendingName = null
+                    val target = File(destDir, targetName)
+                    val dataLen = size
+
+                    when (type) {
+                        '5' -> { target.mkdirs() }
+                        '2' -> {
+                            val linkTarget = pendingLink ?: linkName
+                            pendingLink = null
+                            symlinks.add(target to linkTarget)
+                        }
+                        '0', '\u0000', '7' -> {
+                            target.parentFile?.mkdirs()
+                            FileOutputStream(target).use { out ->
+                                var remaining = dataLen
+                                val chunk = ByteArray(64 * 1024)
+                                while (remaining > 0) {
+                                    val r = gz.read(chunk, 0, minOf(chunk.size.toLong(), remaining).toInt())
+                                    if (r < 0) break
+                                    out.write(chunk, 0, r)
+                                    remaining -= r
+                                }
+                            }
+                            count++
+                        }
+                        else -> { /* ignore other types */ }
+                    }
+                    skipFully(gz, blockAlign(dataLen))
+                }
             }
-            exit == 0
+            // create symlinks after all real files (order-independent)
+            symlinks.forEach { (target, linkTarget) ->
+                target.parentFile?.mkdirs()
+                if (target.exists()) target.delete()
+                try {
+                    java.nio.file.Files.createSymbolicLink(target.toPath(), java.nio.file.Paths.get(linkTarget))
+                } catch (e: Exception) {
+                    android.util.Log.w("RootfsManager", "symlink skip $target -> $linkTarget")
+                }
+            }
+            android.util.Log.i("RootfsManager", "extracted $count files")
+            true
         } catch (e: Exception) {
             android.util.Log.e("RootfsManager", "extract exception", e)
             false
+        }
+    }
+
+    private fun parseTarString(h: ByteArray, start: Int, len: Int): String {
+        var end = start
+        while (end < start + len && h[end] != 0.toByte()) end++
+        return String(h, start, end - start, Charsets.UTF_8)
+    }
+
+    private fun parseOctal(h: ByteArray, start: Int, len: Int): Long {
+        var v = 0L
+        for (i in start until start + len) {
+            val c = h[i].toInt()
+            if (c == 0 || c == ' '.code) continue
+            if (c < '0'.code || c > '7'.code) break
+            v = v * 8 + (c - '0'.code)
+        }
+        return v
+    }
+
+    private fun readLongName(gz: java.util.zip.GZIPInputStream, size: Long): String {
+        val bytes = ByteArray(size.toInt().coerceAtMost(1 shl 20))
+        var off = 0
+        while (off < bytes.size) {
+            val n = gz.read(bytes, off, bytes.size - off)
+            if (n < 0) break
+            off += n
+        }
+        return String(bytes, 0, off, Charsets.UTF_8).trimEnd('\u0000')
+    }
+
+    private fun blockAlign(size: Long): Long = (size + 511) / 512 * 512
+
+    /** Skip exactly [n] bytes (InputStream.skip may skip less). */
+    private fun skipFully(input: java.io.InputStream, n: Long) {
+        var remaining = n
+        val buf = ByteArray(8192)
+        while (remaining > 0) {
+            val r = input.read(buf, 0, minOf(buf.size.toLong(), remaining).toInt())
+            if (r < 0) return
+            remaining -= r
         }
     }
 

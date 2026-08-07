@@ -19,14 +19,23 @@ class ProotRunner(private val rootfs: RootfsManager) {
         val timedOut: Boolean = false
     )
 
+    companion object {
+        /** Guest-side workspace path (inside the proot guest). */
+        const val WORKSPACE_GUEST = "/root/projects"
+    }
+
     /**
      * Base proot invocation. Bind-mounts /sdcard, /proc, /dev, /sys and the
-     * project dir. LD_LIBRARY_PATH covers the bundled proot .so deps.
+     * project workspace (host files/projects → guest /root/projects).
      */
     fun buildCommand(
         workDir: String = "/root",
         extraArgs: List<String> = emptyList()
     ): List<String> {
+        // ensure host workspace exists before bind
+        runCatching {
+            rootfs.workspaceHostDir.mkdirs()
+        }
         val cmd = mutableListOf(
             rootfs.prootBin.absolutePath,
             "-0",                       // fake root
@@ -36,6 +45,7 @@ class ProotRunner(private val rootfs: RootfsManager) {
             "-b", "/sys",
             "-b", "/sdcard:/sdcard",
             "-b", "${android.os.Environment.getExternalStorageDirectory().absolutePath}:/sdcard",
+            "-b", "${rootfs.workspaceHostDir.absolutePath}:$WORKSPACE_GUEST",
             "-w", workDir
         )
         cmd.addAll(extraArgs)
@@ -52,7 +62,11 @@ class ProotRunner(private val rootfs: RootfsManager) {
         "HOME" to "/root",
         "PATH" to "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         "LANG" to "C.UTF-8",
-        "LC_ALL" to "C.UTF-8"
+        "LC_ALL" to "C.UTF-8",
+        // colorful prompt & tools (highlighting)
+        "PS1" to "\\[\\e[1;32m\\]ubuntu@ancode\\[\\e[0m\\]:\\[\\e[1;34m\\]\\w\\[\\e[0m\\]\\$ ",
+        "LS_COLORS" to "di=1;34:ln=1;36:ex=1;32:*.tar=1;31:*.zip=1;31:*.gz=1;31",
+        "GREP_COLORS" to "mt=1;31"
     )
 
     /**
@@ -65,6 +79,8 @@ class ProotRunner(private val rootfs: RootfsManager) {
         timeoutMs: Long = 120_000,
         maxOutputChars: Int = 30_000
     ): ExecResult = withContext(Dispatchers.IO) {
+        // ensure workspace + helpers exist before running anything
+        prepareGuest()
         val full = buildCommand(cwd, listOf("/bin/bash", "-lc", command))
         val pb = ProcessBuilder(full)
         pb.environment().putAll(prootEnv())
@@ -106,8 +122,40 @@ class ProotRunner(private val rootfs: RootfsManager) {
 
     /** Create the default project workspace directory inside the guest. */
     suspend fun ensureProjectsDir(): Boolean = withContext(Dispatchers.IO) {
-        val res = execute("mkdir -p /root/projects && chmod 755 /root/projects", timeoutMs = 30_000)
-        res.exitCode == 0
+        prepareGuest()
+        true
+    }
+
+    /**
+     * One-time guest setup: create the workspace dir and write a small
+     * /root/.bashrc enabling colorized ls/grep output (terminal highlighting).
+     * Cheap to run on every execute (idempotent).
+     */
+    private fun prepareGuest() {
+        runCatching {
+            // workspace dir (host /sdcard/Ancode/projects is bind-mounted here)
+            val guestWs = File(rootfs.rootfsDir, WORKSPACE_GUEST.removePrefix("/"))
+            guestWs.mkdirs()
+
+            // colorized defaults for interactive & non-interactive shells
+            val bashrc = File(rootfs.rootfsDir, "root/.bashrc")
+            if (!bashrc.exists()) {
+                bashrc.parentFile?.mkdirs()
+                bashrc.writeText(
+                    """
+                    |# Ancode defaults
+                    |export PS1='\[\e[1;32m\]ubuntu@ancode\[\e[0m\]:\[\e[1;34m\]\w\[\e[0m\]\$ '
+                    |alias ls='ls --color=auto'
+                    |alias ll='ls -la --color=auto'
+                    |alias grep='grep --color=auto'
+                    |alias egrep='egrep --color=auto'
+                    |export LS_COLORS='di=1;34:ln=1;36:ex=1;32:*.tar=1;31:*.zip=1;31:*.gz=1;31'
+                    |export GREP_COLORS='mt=1;31'
+                    |cd /root/projects 2>/dev/null || true
+                    """.trimMargin()
+                )
+            }
+        }
     }
 
     private fun truncate(s: String, max: Int): String =

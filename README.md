@@ -29,13 +29,14 @@ Ancode 在手机上内置一个 **proot Ubuntu 24.04 (arm64)** 环境，配合 K
 | 功能 | 说明 |
 |------|------|
 | 🤖 **Agent 核心** | Kotlin 原生实现，参考 OpenCode build agent 设计：`system + 历史 + 工具结果 → 模型 → 执行工具 → 回填结果` 的自主循环 |
-| 🐧 **内置 Linux 环境** | 首次运行自动下载 `ubuntu-base-24.04.3-base-arm64`（28MB，SHA256 校验，多镜像），通过 **proot**（免 root）运行 |
+| 🐧 **内置 Linux 环境** | 首次运行自动下载 `ubuntu-base-24.04.3-base-arm64`（28MB，SHA256 校验，多镜像+手动导入兜底），通过 **proot**（免 root）运行 |
 | 📟 **现代 TUI 风 UI** | Jetpack Compose 深色终端美学：等宽字体、ANSI 渲染、Markdown、工具调用卡片、流式光标 |
 | 🛠️ **内置工具** | `terminal`（proot 内 bash）、`read_file` / `write_file` / `edit_file`、`glob`、`grep`、`todo` |
-| ✅ **Do List** | Claude Code 风格待办清单，Agent 规划步骤实时同步到侧边面板 |
-| 💬 **会话管理** | 多会话持久化（JSON），随时恢复上下文 |
-| 🔌 **OpenAI 兼容优先** | DeepSeek / OpenAI / 通义千问 / 智谱 GLM / Ollama 本地模型，一键切换 |
-| 📱 **交互终端** | 真实 PTY（JNI + posix_openpt）+ 基础 VT100 ANSI 渲染，可手动敲命令 |
+| ✅ **Do List（工具）** | Claude Code 风格待办清单作为 **agent 工具**（todo），进度实时以工具调用卡片展示在对话流中 |
+| 💬 **会话管理** | 会话列表与对话合并为一个「聊天」页，点击会话标题即可切换；JSON 持久化 |
+| 🔌 **多模型供应商** | 同时配置多个 OpenAI 兼容供应商（DeepSeek / 通义 / 智谱 / OpenAI / Ollama / Moonshot / SiliconFlow / 自定义），随时切换 |
+| 📱 **交互终端** | 真实 PTY（JNI + posix_openpt）+ 基础 VT100 ANSI 渲染 + 彩色 PS1/高亮，可手动敲命令 |
+| 🗂️ **工作区直通** | 项目文件写入应用私有目录 `files/projects`（guest 内 `/root/projects`），debug 版集成 MTDataFilesProvider，MT 管理器免 ROOT 直接浏览 |
 | ⚙️ **MCP / Skills 预留** | `Tool` 接口即扩展点，下一里程碑接入 MCP 服务器与 Skills 系统 |
 
 ## 🏗️ 架构
@@ -108,16 +109,19 @@ cd ancode
 ## 📱 使用
 
 1. **安装 APK** → 打开 Ancode
-2. **设置** → 填入 API Base URL / API Key / 模型（默认 DeepSeek）
+2. **设置** → 添加/切换模型供应商（可同时配置多个）：
    - DeepSeek: `https://api.deepseek.com` · `deepseek-chat`
    - 通义: `https://dashscope.aliyuncs.com/compatible-mode/v1` · `qwen-plus`
    - Ollama: `http://<局域网IP>:11434/v1` · 任意已拉取模型
 3. **设置 → Linux 环境** → 点击「安装环境」（下载 28MB rootfs + 解压，一次完成）
-4. 回到**对话**页，直接描述任务：
+   - 若网络下载失败：手动下载 `ubuntu-base-24.04.3-base-arm64.tar.gz` 放到 `/sdcard/Download/`，重新点击安装即自动导入
+4. 回到**聊天**页，直接描述任务：
    - 普通输入 → Agent 自主执行（规划 Do List → 读文件 → 写代码 → 跑命令）
    - `! <命令>` → 快速执行终端命令
-5. **终端**页 → 交互式 bash（完整 Ubuntu 环境）
-6. 顶部 ☰ → **Do List** 实时查看 Agent 进度
+   - 顶部会话标题可点击切换/新建会话
+5. **终端**页 → 交互式 bash（完整 Ubuntu 环境，彩色 PS1 + ls/grep 高亮）
+6. **Do List**：Agent 通过 `todo` 工具维护，进度以工具卡片实时展示在对话流中
+7. **MT 管理器**（debug 版内置 MTDataFilesProvider）：添加本地存储 → 选中 Ancode → 免 ROOT 浏览 `files/projects`（AI 生成的项目文件）与 `files/linux`（rootfs）
 
 ## 🧠 专用系统提示词
 

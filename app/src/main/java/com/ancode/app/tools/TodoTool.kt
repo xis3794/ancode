@@ -7,7 +7,7 @@ import java.util.UUID
 
 /**
  * Built-in Do List (Claude Code TodoWrite style).
- * The agent maintains a plan; the UI renders it live in the TodoPanel.
+ * The agent maintains a plan; rendered as tool-call cards in the chat stream.
  */
 class TodoTool(
     private val onUpdate: (List<TodoItem>) -> Unit
