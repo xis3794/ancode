@@ -14,7 +14,9 @@ data class Session(
     val updatedAt: Long = System.currentTimeMillis(),
     val messages: List<ChatMessage> = emptyList(),
     val todos: List<TodoItem> = emptyList(),
-    val workingDir: String = "/root/projects"
+    val workingDir: String = "/root/projects",
+    /** Each session owns a workspace (host files/workspaces/<workspaceId>). */
+    val workspaceId: String = "default"
 ) {
     fun withUpdatedAt(): Session = copy(updatedAt = System.currentTimeMillis())
 }

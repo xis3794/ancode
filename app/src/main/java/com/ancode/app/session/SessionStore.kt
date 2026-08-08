@@ -23,7 +23,13 @@ class SessionStore(private val context: Context) {
     }
 
     suspend fun newSession(title: String = "新会话"): Session {
-        val s = Session(id = UUID.randomUUID().toString(), title = title)
+        val id = UUID.randomUUID().toString()
+        val s = Session(
+            id = id,
+            title = title,
+            // each session gets its own workspace dir (host files/workspaces/<id>)
+            workspaceId = id.take(8)
+        )
         save(s)
         return s
     }

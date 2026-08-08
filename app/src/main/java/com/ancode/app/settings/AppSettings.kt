@@ -81,12 +81,13 @@ class AppSettings(private val context: Context) {
             val legacy = ProviderProfile(
                 id = "p-legacy",
                 name = "自定义",
-                baseUrl = legacyBase ?: defaults.first().baseUrl,
+                baseUrl = legacyBase ?: "https://api.deepseek.com",
                 apiKey = legacyKey ?: "",
-                model = legacyModel ?: defaults.first().model
+                model = legacyModel ?: "deepseek-chat"
             )
             return listOf(legacy) + defaults.filter { it.id != legacy.id }
         }
+        // nothing configured yet → user adds providers themselves in Settings
         return defaults
     }
 
@@ -132,7 +133,15 @@ class AppSettings(private val context: Context) {
         val s = current()
         val p = s.providers.firstOrNull { it.id == s.activeProviderId }
             ?: s.providers.firstOrNull()
-            ?: defaultProviders().first()
+        if (p == null) {
+            // no provider configured yet — return a placeholder; AppViewModel
+            // will prompt the user to add one
+            return LlmConfig(
+                baseUrl = "https://api.deepseek.com",
+                apiKey = "",
+                model = "deepseek-chat"
+            )
+        }
         return LlmConfig(
             baseUrl = p.baseUrl,
             apiKey = p.apiKey,
@@ -150,14 +159,8 @@ class AppSettings(private val context: Context) {
     }
 
     companion object {
-        /** Built-in provider presets (OpenAI-compatible). */
-        fun defaultProviders(): List<ProviderProfile> = listOf(
-            ProviderProfile("p-deepseek", "DeepSeek", "https://api.deepseek.com", "", "deepseek-chat"),
-            ProviderProfile("p-qwen", "通义千问", "https://dashscope.aliyuncs.com/compatible-mode/v1", "", "qwen-plus"),
-            ProviderProfile("p-glm", "智谱GLM", "https://open.bigmodel.cn/api/paas/v4", "", "glm-4-flash"),
-            ProviderProfile("p-openai", "OpenAI", "https://api.openai.com/v1", "", "gpt-4o-mini"),
-            ProviderProfile("p-ollama", "Ollama(本地)", "http://127.0.0.1:11434/v1", "", "qwen2.5-coder:7b")
-        )
+        /** Built-in provider presets (OpenAI-compatible) — user picks when adding. */
+        fun defaultProviders(): List<ProviderProfile> = emptyList()
 
         fun newId(): String = "p-" + System.currentTimeMillis().toString(16)
     }

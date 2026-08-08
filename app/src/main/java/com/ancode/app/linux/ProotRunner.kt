@@ -34,7 +34,7 @@ class ProotRunner(private val rootfs: RootfsManager) {
     ): List<String> {
         // ensure host workspace exists before bind
         runCatching {
-            rootfs.workspaceHostDir.mkdirs()
+            rootfs.workspaceHostDir().mkdirs()
         }
         val cmd = mutableListOf(
             rootfs.prootBin.absolutePath,
@@ -45,7 +45,7 @@ class ProotRunner(private val rootfs: RootfsManager) {
             "-b", "/sys",
             "-b", "/sdcard:/sdcard",
             "-b", "${android.os.Environment.getExternalStorageDirectory().absolutePath}:/sdcard",
-            "-b", "${rootfs.workspaceHostDir.absolutePath}:$WORKSPACE_GUEST",
+            "-b", "${rootfs.workspaceHostDir().absolutePath}:$WORKSPACE_GUEST",
             "-w", workDir
         )
         cmd.addAll(extraArgs)
@@ -133,9 +133,8 @@ class ProotRunner(private val rootfs: RootfsManager) {
      */
     private fun prepareGuest() {
         runCatching {
-            // workspace dir (host /sdcard/Ancode/projects is bind-mounted here)
-            val guestWs = File(rootfs.rootfsDir, WORKSPACE_GUEST.removePrefix("/"))
-            guestWs.mkdirs()
+            // workspace dir (host files/workspaces/<id> is bind-mounted here)
+            runCatching { rootfs.workspaceHostDir().mkdirs() }
 
             // colorized defaults for interactive & non-interactive shells
             val bashrc = File(rootfs.rootfsDir, "root/.bashrc")

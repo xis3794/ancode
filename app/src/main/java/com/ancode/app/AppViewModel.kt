@@ -75,6 +75,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             settings.settings.collect { _settings.value = it }
         }
         viewModelScope.launch {
+            // seed counter from existing sessions so names never collide
+            sessionCounter = sessionStore.list().size
             settings.activeSessionId.collect { id ->
                 if (id != null) loadSession(id) else createSession()
             }
@@ -84,9 +86,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---- session management ----
 
+    /** Monotonic counter so new sessions are named 新会话1, 新会话2, … (no flicker). */
+    private var sessionCounter = 0
+
     fun createSession() {
         viewModelScope.launch {
-            val s = sessionStore.newSession("新会话 ${System.currentTimeMillis().toString().takeLast(4)}")
+            sessionCounter++
+            val s = sessionStore.newSession("新会话 $sessionCounter")
+            rootfs.setCurrentWorkspace(s.workspaceId)
             settings.setActiveSession(s.id)
         }
     }
@@ -98,12 +105,32 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _messages.value = s.messages
             todoTool.restore(s.todos)
             _todos.value = s.todos
+            // switch this session's workspace before any tool runs
+            rootfs.setCurrentWorkspace(s.workspaceId)
             settings.setActiveSession(id)
             refreshSessionList()
         }
     }
 
-    fun newSessionFromId(id: String) = loadSession(id)
+        fun newSessionFromId(id: String) = loadSession(id)
+
+    /** Create a new session and immediately send the first user message (Home prompt). */
+    fun newSessionAndSend(text: String) {
+        if (_isRunning.value) return
+        viewModelScope.launch {
+            sessionCounter++
+            val s = sessionStore.newSession("新会话 $sessionCounter")
+            rootfs.setCurrentWorkspace(s.workspaceId)
+            settings.setActiveSession(s.id)
+            _currentSession.value = s
+            _messages.value = emptyList()
+            todoTool.restore(emptyList())
+            _todos.value = emptyList()
+            appendMessage(ChatMessage(role = Role.USER, content = text.trim()))
+            persist()
+            runAgent()
+        }
+    }
 
     fun deleteSession(id: String) {
         viewModelScope.launch {
@@ -177,9 +204,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun runAgent() {
         if (_isRunning.value) return
         val cfg = settings.llmConfig()
+        val hasProvider = _settings.value.providers.isNotEmpty()
+        if (!hasProvider) {
+            appendMessage(ChatMessage(role = Role.ASSISTANT, content = "⚠️ 尚未配置模型供应商。请前往「设置 → 模型供应商」点击 + 添加（预设：DeepSeek / 通义 / 智谱 / OpenAI / Ollama 等）。"))
+            persist()
+            return
+        }
         val isLocal = cfg.baseUrl.contains("10.0.2.2") || cfg.baseUrl.contains("localhost") || cfg.baseUrl.contains("127.0.0.1")
         if (cfg.apiKey.isBlank() && !isLocal) {
-            appendMessage(ChatMessage(role = Role.ASSISTANT, content = "⚠️ 尚未配置 API Key。请前往「设置」填写 API Key（支持 DeepSeek / OpenAI / 通义 / 智谱 / Ollama 等 OpenAI 兼容接口）。"))
+            appendMessage(ChatMessage(role = Role.ASSISTANT, content = "⚠️ 当前供应商尚未填写 API Key。请前往「设置 → 模型供应商」编辑并填入。"))
             persist()
             return
         }

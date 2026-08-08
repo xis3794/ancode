@@ -99,6 +99,13 @@ fun SettingsScreen(
                     }
                 }
 
+                if (settings.providers.isEmpty()) {
+                    Text(
+                        "尚未添加供应商 — 点击右上 + 添加（支持 DeepSeek / 通义 / 智谱 / OpenAI / Ollama / Moonshot / SiliconFlow / 自定义）",
+                        color = TextMuted,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
                 settings.providers.forEach { p ->
                     ProviderRow(
                         profile = p,

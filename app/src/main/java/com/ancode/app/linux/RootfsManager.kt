@@ -60,11 +60,23 @@ class RootfsManager(private val context: Context) {
 
     val linuxDir: File = File(context.filesDir, "linux")
     val rootfsDir: File = File(linuxDir, "rootfs")
-    /** Host-side workspace (guest /root/projects is bind-mounted to this). */
-    val workspaceHostDir: File = File(context.filesDir, "projects")
     val prootBin: File = File(linuxDir, "bin/proot")
     val prootLibDir: File = File(linuxDir, "lib")
     val prootLoaderDir: File = File(linuxDir, "libexec/proot")
+
+    /** Current session workspace id (each session owns a workspace). */
+    @Volatile
+    var currentWorkspace: String = "default"
+        private set
+
+    /** Host dir for a workspace id (guest /root/projects is bind-mounted to this). */
+    fun workspaceHostDir(wsId: String = currentWorkspace): File =
+        File(context.filesDir, "workspaces/$wsId")
+
+    fun setCurrentWorkspace(wsId: String) {
+        currentWorkspace = wsId
+        runCatching { workspaceHostDir().mkdirs() }
+    }
 
     private val installing = AtomicBoolean(false)
 
@@ -88,7 +100,7 @@ class RootfsManager(private val context: Context) {
             p.startsWith("/sdcard") || p.startsWith("/storage") -> null
             p == "/root/projects" || p.startsWith("/root/projects/") -> {
                 val rel = p.removePrefix("/root/projects").trimStart('/')
-                File(workspaceHostDir, rel)
+                File(workspaceHostDir(), rel)
             }
             p.startsWith("/") -> File(rootfsDir, p.removePrefix("/"))
             else -> File(rootfsDir, p)
@@ -135,7 +147,18 @@ class RootfsManager(private val context: Context) {
     suspend fun install(onProgress: (Float) -> Unit = {}): Boolean {
         if (installing.compareAndSet(false, true)) {
             return try {
-                doInstall(onProgress)
+                // ALL network / disk IO runs on Dispatchers.IO; the UI thread
+                // only receives state updates. Any exception is caught and
+                // surfaced as an error state instead of crashing the app.
+                withContext(Dispatchers.IO) {
+                    doInstall { p ->
+                        kotlinx.coroutines.withContext(Dispatchers.Main) { onProgress(p) }
+                    }
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("RootfsManager", "install failed", e)
+                _state.value = State(Status.ERROR, 0f, error = "安装异常：${e.message ?: e.javaClass.simpleName}")
+                false
             } finally {
                 installing.set(false)
             }

@@ -60,7 +60,6 @@ fun TerminalScreen(
     var input by remember { mutableStateOf("") }
     var output by remember { mutableIntStateOf(0) }  // bump to re-render
     var collectJob by remember { mutableStateOf<Job?>(null) }
-
     fun startShell() {
         if (!viewModel.rootfs.isReady()) return
         collectJob?.cancel()
