@@ -172,8 +172,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun installRootfs() {
         viewModelScope.launch {
             _statusText.value = "正在安装 Ubuntu 环境..."
-            val ok = rootfs.install()
-            _statusText.value = if (ok) "Ubuntu 环境就绪" else "安装失败：${rootfs.state.value.error}"
+            runCatching { rootfs.install() }
+                .onSuccess { ok ->
+                    _statusText.value = if (ok) "Ubuntu 环境就绪" else "安装失败：${rootfs.state.value.error}"
+                }
+                .onFailure { e ->
+                    _statusText.value = "安装异常：${e.message}"
+                }
+        }
+    }
+
+    /** Import a user-picked rootfs tarball (SAF — no storage permission needed). */
+    fun importRootfsFromUri(uri: android.net.Uri) {
+        viewModelScope.launch {
+            _statusText.value = "正在导入 rootfs..."
+            runCatching { rootfs.importFromUri(uri) }
+                .onSuccess { err ->
+                    _statusText.value = err ?: "Ubuntu 环境就绪"
+                }
+                .onFailure { e ->
+                    _statusText.value = "导入异常：${e.message}"
+                }
         }
     }
 

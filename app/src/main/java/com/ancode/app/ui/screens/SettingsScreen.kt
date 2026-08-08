@@ -1,5 +1,7 @@
 package com.ancode.app.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -70,6 +72,13 @@ fun SettingsScreen(
     var editing by remember { mutableStateOf<ProviderProfile?>(null) }
     var showNew by remember { mutableStateOf(false) }
     var workingDir by remember { mutableStateOf(settings.workingDir) }
+
+    // SAF launcher: user picks a rootfs .tar.gz from their own file manager
+    val pickRootfs = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) viewModel.importRootfsFromUri(uri)
+    }
 
     LaunchedEffect(settings) {
         workingDir = settings.workingDir
@@ -184,7 +193,7 @@ fun SettingsScreen(
                     }
                 }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = { viewModel.installRootfs() },
                         enabled = rootfsState.status != RootfsManager.Status.DOWNLOADING &&
@@ -192,20 +201,28 @@ fun SettingsScreen(
                     ) {
                         Icon(Icons.Filled.Download, null, modifier = Modifier.width(16.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text(if (rootfsState.status == RootfsManager.Status.READY) "重新安装" else "安装环境")
+                        Text(if (rootfsState.status == RootfsManager.Status.READY) "重新下载安装" else "下载安装")
+                    }
+                    Button(
+                        onClick = { pickRootfs.launch(arrayOf("*/*")) },
+                        enabled = rootfsState.status != RootfsManager.Status.DOWNLOADING &&
+                            rootfsState.status != RootfsManager.Status.EXTRACTING,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E40AF))
+                    ) {
+                        Icon(Icons.Filled.Memory, null, modifier = Modifier.width(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("从本地选择")
                     }
                     TextButton(onClick = {
-                        scope.launch {
-                            probeResult = viewModel.probeLinux()
-                        }
+                        scope.launch { probeResult = viewModel.probeLinux() }
                     }) {
-                        Text("环境自检")
+                        Text("自检")
                     }
                 }
                 Text(
-                    "若下载失败：请用浏览器/下载器下载 ubuntu-base-24.04.3-base-arm64.tar.gz\n" +
-                        "（https://mirrors.aliyun.com/ubuntu-cdimage/ubuntu-base/releases/24.04.3/release/）\n" +
-                        "放到 /sdcard/Download/ 后重新点击安装（自动导入本地文件）。",
+                    "若下载失败：下载 ubuntu-base-24.04.3-base-arm64.tar.gz（约28MB），\n" +
+                        "点击「从本地选择」从文件管理器选取导入（无需存储权限）。\n" +
+                        "镜像：https://mirrors.aliyun.com/ubuntu-cdimage/ubuntu-base/releases/24.04.3/release/",
                     color = TextMuted,
                     style = MaterialTheme.typography.bodySmall
                 )

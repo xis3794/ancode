@@ -238,13 +238,55 @@ class RootfsManager(private val context: Context) {
         return true
     }
 
-    /** Look for a manually downloaded tarball in well-known public locations. */
+    /** Look for a manually downloaded tarball in well-known public locations.
+     *  Guarded: scoped storage may throw EACCES / return false without permission. */
     private fun tryImportFromDownload(): File? {
-        for (p in MANUAL_IMPORT_PATHS) {
-            val f = File(p)
-            if (f.exists() && f.length() > 1_000_000) return f
+        return runCatching {
+            for (p in MANUAL_IMPORT_PATHS) {
+                val f = File(p)
+                if (f.exists() && f.canRead() && f.length() > 1_000_000) {
+                    // probe readability — exists() can return true while open() fails
+                    f.inputStream().use { it.read() }
+                    return@runCatching f
+                }
+            }
+            null
+        }.getOrNull()
+    }
+
+    /**
+     * Import a rootfs tarball selected via the system file picker (SAF —
+     * no storage permission needed). Copies into the app files dir, then the
+     * normal verify/extract flow continues. Returns null on success, or an
+     * error message on failure.
+     */
+    suspend fun importFromUri(uri: android.net.Uri): String? = withContext(Dispatchers.IO) {
+        try {
+            if (!ensureProotBinaries()) return@withContext "proot 二进制部署失败"
+            linuxDir.mkdirs()
+            val tarFile = File(linuxDir, ROOTFS_FILENAME)
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                FileOutputStream(tarFile).use { output -> input.copyTo(output) }
+            } ?: return@withContext "无法读取所选文件"
+            _state.value = State(Status.EXTRACTING, 0.9f, "校验并解压中...")
+
+            val actual = sha256(tarFile)
+            if (!actual.equals(ROOTFS_SHA256, ignoreCase = true)) {
+                tarFile.delete()
+                return@withContext "SHA256 校验失败：所选文件不是官方 ubuntu-base-24.04.3-arm64\n期望 $ROOTFS_SHA256\n实际 $actual"
+            }
+            val ok = extractTarGz(tarFile, rootfsDir)
+            if (!ok) {
+                return@withContext "解压失败（文件可能损坏）"
+            }
+            tarFile.delete()
+            postInstall()
+            _state.value = State(Status.READY, 1f, "Ubuntu $UBUNTU_VERSION 就绪", rootfsDir)
+            null
+        } catch (e: Exception) {
+            android.util.Log.e("RootfsManager", "importFromUri failed", e)
+            "导入异常：${e.message ?: e.javaClass.simpleName}"
         }
-        return null
     }
 
     /**
