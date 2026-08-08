@@ -148,12 +148,11 @@ class RootfsManager(private val context: Context) {
         if (installing.compareAndSet(false, true)) {
             return try {
                 // ALL network / disk IO runs on Dispatchers.IO; the UI thread
-                // only receives state updates. Any exception is caught and
-                // surfaced as an error state instead of crashing the app.
+                // only receives state updates via StateFlow (thread-safe).
+                // Any exception is caught and surfaced as an error state
+                // instead of crashing the app.
                 withContext(Dispatchers.IO) {
-                    doInstall { p ->
-                        kotlinx.coroutines.withContext(Dispatchers.Main) { onProgress(p) }
-                    }
+                    doInstall(onProgress)
                 }
             } catch (e: Exception) {
                 android.util.Log.e("RootfsManager", "install failed", e)
