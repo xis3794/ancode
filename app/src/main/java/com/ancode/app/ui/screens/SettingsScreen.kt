@@ -244,13 +244,6 @@ fun SettingsScreen(
         ) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("Ancode v0.2.0", color = TextPrimary, style = MaterialTheme.typography.titleSmall)
-                Text(
-                    "Android 原生 vibe coding Agent · Kotlin/Compose · proot Ubuntu · OpenAI 兼容\n" +
-                        "工具：terminal / read_file / write_file / edit_file / glob / grep / todo\n" +
-                        "Roadmap：MCP 支持 · Skills · Anthropic/Gemini 适配器",
-                    color = TextMuted,
-                    style = MaterialTheme.typography.bodySmall
-                )
             }
         }
     }

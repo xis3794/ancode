@@ -362,19 +362,21 @@ class RootfsManager(private val context: Context) {
                     val name = parseTarString(header, 0, 100)
                     val type = header[156].toInt().toChar()
                     val size = parseOctal(header, 124, 12)
+                    val mode = parseOctal(header, 100, 8).toInt()
                     val linkName = parseTarString(header, 157, 100)
                     val prefix = parseTarString(header, 345, 155)
                     val fullName = if (prefix.isNotEmpty()) "$prefix/$name" else name
 
-                    // GNU long name extension
+                    // GNU long name extension (data = the long name bytes)
                     if (type == 'L') {
                         pendingName = readLongName(gz, size)
-                        skipFully(gz, blockAlign(size))
+                        // only skip the padding after the name data
+                        skipFully(gz, blockAlign(size) - size)
                         continue
                     }
                     if (type == 'K') {
                         pendingLink = readLongName(gz, size)
-                        skipFully(gz, blockAlign(size))
+                        skipFully(gz, blockAlign(size) - size)
                         continue
                     }
 
@@ -384,11 +386,17 @@ class RootfsManager(private val context: Context) {
                     val dataLen = size
 
                     when (type) {
-                        '5' -> { target.mkdirs() }
+                        '5' -> {
+                            target.mkdirs()
+                            applyMode(target, mode, isDir = true)
+                            // dirs have no data; skip padding (zero)
+                            skipFully(gz, blockAlign(dataLen) - dataLen)
+                        }
                         '2' -> {
                             val linkTarget = pendingLink ?: linkName
                             pendingLink = null
                             symlinks.add(target to linkTarget)
+                            skipFully(gz, blockAlign(dataLen) - dataLen)
                         }
                         '0', '\u0000', '7' -> {
                             target.parentFile?.mkdirs()
@@ -402,11 +410,17 @@ class RootfsManager(private val context: Context) {
                                     remaining -= r
                                 }
                             }
+                            applyMode(target, mode, isDir = false)
                             count++
+                            // data consumed above; skip only padding
+                            skipFully(gz, blockAlign(dataLen) - dataLen)
                         }
-                        else -> { /* ignore other types */ }
+                        else -> {
+                            // PAX extended headers ('x'/'g') and other types:
+                            // consume the whole data block to keep the stream aligned
+                            skipFully(gz, blockAlign(dataLen))
+                        }
                     }
-                    skipFully(gz, blockAlign(dataLen))
                 }
             }
             // create symlinks after all real files (order-independent)
@@ -456,6 +470,19 @@ class RootfsManager(private val context: Context) {
     }
 
     private fun blockAlign(size: Long): Long = (size + 511) / 512 * 512
+
+    /** Apply tar mode bits (rwx per owner/group/other) to a file or dir. */
+    private fun applyMode(f: File, mode: Int, isDir: Boolean) {
+        runCatching {
+            val ownerX = mode and 0b001_000_000 != 0
+            val ownerR = mode and 0b100_000_000 != 0
+            val ownerW = mode and 0b010_000_000 != 0
+            // Android's File API applies the same bits to all users
+            f.setExecutable(ownerX || (isDir && ownerX), false)
+            f.setReadable(ownerR, false)
+            f.setWritable(ownerW, false)
+        }
+    }
 
     /** Skip exactly [n] bytes (InputStream.skip may skip less). */
     private fun skipFully(input: java.io.InputStream, n: Long) {
