@@ -48,7 +48,7 @@ fun AncodeApp(viewModel: AppViewModel) {
                         selected = tab == t,
                         onClick = { tab = t },
                         icon = { Icon(t.icon, t.label) },
-                        label = { Text(t.label, color = if (tab == t) null else TextMuted) }
+                        label = { Text(t.label, color = TextMuted) }
                     )
                 }
             }
