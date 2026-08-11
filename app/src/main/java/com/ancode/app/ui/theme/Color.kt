@@ -2,27 +2,27 @@ package com.ancode.app.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// ---- Ancode "modern TUI" dark palette ----
-val BgDeep = Color(0xFF0B0F14)        // main background
-val BgElevated = Color(0xFF131A22)    // cards / panels
-val BgHover = Color(0xFF1A2330)
-val BorderDim = Color(0xFF22303F)
-val BorderActive = Color(0xFF3B82F6)
+// ---- Ancode pure-black TUI palette (matches the opencode terminal look) ----
+val BgDeep = Color(0xFF000000)        // main background — pure black
+val BgElevated = Color(0xFF0A0A0A)    // cards / panels
+val BgHover = Color(0xFF141414)
+val BorderDim = Color(0xFF1F1F1F)
+val BorderActive = Color(0xFF4A9EFF)
 
-val TextPrimary = Color(0xFFE6EDF3)
-val TextSecondary = Color(0xFF8B98A5)
-val TextMuted = Color(0xFF5C6B7A)
+val TextPrimary = Color(0xFFD8DEE4)
+val TextSecondary = Color(0xFF9AA3AD)
+val TextMuted = Color(0xFF5A6169)
 
-val Accent = Color(0xFF3B82F6)        // terminal blue
-val AccentSoft = Color(0xFF60A5FA)
-val Success = Color(0xFF22C55E)
-val Warning = Color(0xFFF59E0B)
-val Error = Color(0xFFEF4444)
+val Accent = Color(0xFF4A9EFF)        // terminal blue (opencode "Build" label)
+val AccentSoft = Color(0xFF7DB8FF)
+val Success = Color(0xFF6FCF6F)
+val Warning = Color(0xFFD9A05B)
+val Error = Color(0xFFE05561)
 val Purple = Color(0xFFA78BFA)
-val Cyan = Color(0xFF22D3EE)
+val Cyan = Color(0xFF4CD1E0)
 
 // ANSI 16-color palette (xterm-ish) for the terminal renderer
-val AnsiBlack = Color(0xFF1E242C)
+val AnsiBlack = Color(0xFF000000)
 val AnsiRed = Color(0xFFE05561)
 val AnsiGreen = Color(0xFF8CC265)
 val AnsiYellow = Color(0xFFD18F52)

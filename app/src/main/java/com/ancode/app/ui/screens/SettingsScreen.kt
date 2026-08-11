@@ -52,6 +52,7 @@ import com.ancode.app.settings.ProviderProfile
 import com.ancode.app.ui.theme.Accent
 import com.ancode.app.ui.theme.BgDeep
 import com.ancode.app.ui.theme.BgElevated
+import com.ancode.app.ui.theme.BgHover
 import com.ancode.app.ui.theme.BorderDim
 import com.ancode.app.ui.theme.Error
 import com.ancode.app.ui.theme.Success
@@ -165,11 +166,13 @@ fun SettingsScreen(
                     Text("Linux 环境（proot Ubuntu 24.04 arm64）", color = Accent, style = MaterialTheme.typography.titleSmall)
                 }
                 val status = when (rootfsState.status) {
-                    RootfsManager.Status.READY -> "✅ 已就绪"
-                    RootfsManager.Status.DOWNLOADING -> "⏳ 下载中 ${(rootfsState.progress * 100).toInt()}%"
-                    RootfsManager.Status.EXTRACTING -> "⏳ 解压中..."
-                    RootfsManager.Status.ERROR -> "❌ ${rootfsState.error ?: "错误"}"
-                    else -> "○ 未安装"
+                    RootfsManager.Status.READY -> "已就绪"
+                    RootfsManager.Status.DOWNLOADING -> rootfsState.message.ifBlank {
+                        "下载中 ${(rootfsState.progress * 100).toInt()}%"
+                    }
+                    RootfsManager.Status.EXTRACTING -> rootfsState.message.ifBlank { "解压中..." }
+                    RootfsManager.Status.ERROR -> rootfsState.error ?: "错误"
+                    else -> "未安装"
                 }
                 Text(status, color = when (rootfsState.status) {
                     RootfsManager.Status.READY -> Success
@@ -177,27 +180,36 @@ fun SettingsScreen(
                     else -> TextSecondary
                 }, style = MaterialTheme.typography.bodyMedium)
 
-                if (rootfsState.status == RootfsManager.Status.DOWNLOADING) {
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .background(BorderDim, RoundedCornerShape(6.dp))
-                            .padding(vertical = 4.dp)
-                    ) {
+                val busy = rootfsState.status == RootfsManager.Status.DOWNLOADING ||
+                    rootfsState.status == RootfsManager.Status.EXTRACTING
+                if (busy) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Box(
                             Modifier
-                                .fillMaxWidth(rootfsState.progress.coerceIn(0f, 1f))
-                                .background(Accent, RoundedCornerShape(6.dp))
-                                .padding(vertical = 4.dp)
-                        ) {}
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .background(BorderDim, RoundedCornerShape(3.dp))
+                        ) {
+                            Box(
+                                Modifier
+                                    .fillMaxWidth(rootfsState.progress.coerceIn(0f, 1f))
+                                    .height(6.dp)
+                                    .background(Accent, RoundedCornerShape(3.dp))
+                            )
+                        }
+                        Text(
+                            "${(rootfsState.progress * 100).toInt()}%",
+                            color = TextSecondary,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            style = MaterialTheme.typography.bodySmall
+                        )
                     }
                 }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = { viewModel.installRootfs() },
-                        enabled = rootfsState.status != RootfsManager.Status.DOWNLOADING &&
-                            rootfsState.status != RootfsManager.Status.EXTRACTING
+                        enabled = !busy
                     ) {
                         Icon(Icons.Filled.Download, null, modifier = Modifier.width(16.dp))
                         Spacer(Modifier.width(6.dp))
@@ -205,18 +217,23 @@ fun SettingsScreen(
                     }
                     Button(
                         onClick = { pickRootfs.launch(arrayOf("*/*")) },
-                        enabled = rootfsState.status != RootfsManager.Status.DOWNLOADING &&
-                            rootfsState.status != RootfsManager.Status.EXTRACTING,
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E40AF))
+                        enabled = !busy,
+                        colors = ButtonDefaults.buttonColors(containerColor = BgHover)
                     ) {
                         Icon(Icons.Filled.Memory, null, modifier = Modifier.width(16.dp))
                         Spacer(Modifier.width(6.dp))
                         Text("从本地选择")
                     }
-                    TextButton(onClick = {
-                        scope.launch { probeResult = viewModel.probeLinux() }
-                    }) {
-                        Text("自检")
+                    if (busy) {
+                        TextButton(onClick = { viewModel.cancelRootfsInstall() }) {
+                            Text("取消", color = Error)
+                        }
+                    } else {
+                        TextButton(onClick = {
+                            scope.launch { probeResult = viewModel.probeLinux() }
+                        }) {
+                            Text("自检")
+                        }
                     }
                 }
                 Text(
@@ -273,7 +290,7 @@ private fun ProviderRow(
     Row(
         Modifier
             .fillMaxWidth()
-            .background(if (active) Color(0xFF16233A) else BgDeep, RoundedCornerShape(10.dp))
+            .background(if (active) BgHover else BgElevated, RoundedCornerShape(10.dp))
             .clickable(onClick = onSelect)
             .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -287,7 +304,7 @@ private fun ProviderRow(
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Text(
-                profile.name + (if (active) " ✓" else ""),
+                profile.name,
                 color = if (active) Accent else TextPrimary,
                 style = MaterialTheme.typography.titleSmall
             )

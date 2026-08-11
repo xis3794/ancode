@@ -58,6 +58,7 @@ class AgentEngine(
      */
     suspend fun run(
         messages: MutableList<ChatMessage>,
+        onSync: suspend (List<ChatMessage>) -> Unit = { _ -> },
         onEvent: suspend (Event) -> Unit
     ) {
         cancelled.set(false)
@@ -88,6 +89,8 @@ class AgentEngine(
                 }
             )
             messages.add(assistantMsg)
+            val assistantIdx = messages.size - 1
+            onSync(messages.toList())
 
             // ---- 3. No tool calls -> done ----
             if (turn.toolCalls.isEmpty()) {
@@ -97,7 +100,6 @@ class AgentEngine(
             }
 
             // ---- 4. Execute tool calls sequentially ----
-            var allOk = true
             for (tc in turn.toolCalls) {
                 if (cancelled.get()) {
                     onEvent(Event.Finished("已停止"))
@@ -105,26 +107,21 @@ class AgentEngine(
                 }
                 val started = System.currentTimeMillis()
                 onEvent(Event.ToolCallStarted(tc.id, tc.name, tc.arguments))
+                updateToolCall(messages, assistantIdx, tc.id) { it.copy(status = "running") }
+                onSync(messages.toList())
 
                 val (ok, result) = executeTool(tc)
 
                 val duration = System.currentTimeMillis() - started
                 onEvent(Event.ToolCallFinished(tc.id, tc.name, ok, result, duration))
 
-                // mark status in the assistant message for UI
-                val idx = messages.indexOf(assistantMsg)
-                if (idx >= 0) {
-                    val msg = messages[idx]
-                    messages[idx] = msg.copy(toolCalls = msg.toolCalls.map { c ->
-                        if (c.id == tc.id) {
-                            c.copy(
-                                status = if (ok) "success" else "error",
-                                result = if (ok) result.take(2000) else null,
-                                error = if (ok) null else result.take(1000),
-                                durationMs = duration
-                            )
-                        } else c
-                    })
+                updateToolCall(messages, assistantIdx, tc.id) {
+                    it.copy(
+                        status = if (ok) "success" else "error",
+                        result = if (ok) result.take(2000) else null,
+                        error = if (ok) null else result.take(1000),
+                        durationMs = duration
+                    )
                 }
 
                 // tool result message
@@ -136,12 +133,26 @@ class AgentEngine(
                         toolName = tc.name
                     )
                 )
-                if (!ok) allOk = false
+                onSync(messages.toList())
             }
             if (iteration >= maxIterations) {
                 onEvent(Event.Finished("达到最大迭代次数 $maxIterations"))
             }
         }
+    }
+
+    /** Patch one tool call inside the assistant message at [idx] (in place). */
+    private fun updateToolCall(
+        messages: MutableList<ChatMessage>,
+        idx: Int,
+        callId: String,
+        transform: (ToolCall) -> ToolCall
+    ) {
+        if (idx !in messages.indices) return
+        val msg = messages[idx]
+        messages[idx] = msg.copy(toolCalls = msg.toolCalls.map { c ->
+            if (c.id == callId) transform(c) else c
+        })
     }
 
     private suspend fun requestTurn(

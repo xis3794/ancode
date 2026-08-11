@@ -71,6 +71,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var runJob: Job? = null
 
     init {
+        // restore rootfs status on cold start — otherwise the UI shows
+        // "未安装" even though the rootfs is already on disk
+        rootfs.refreshState()
+        viewModelScope.launch { rootfs.restoreIfInstalled() }
         viewModelScope.launch {
             settings.settings.collect { _settings.value = it }
         }
@@ -182,6 +186,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Cancel an in-flight rootfs download / extraction. */
+    fun cancelRootfsInstall() {
+        rootfs.cancelInstall()
+        _statusText.value = "已取消安装"
+    }
+
     /** Import a user-picked rootfs tarball (SAF — no storage permission needed). */
     fun importRootfsFromUri(uri: android.net.Uri) {
         viewModelScope.launch {
@@ -225,18 +235,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val cfg = settings.llmConfig()
         val hasProvider = _settings.value.providers.isNotEmpty()
         if (!hasProvider) {
-            appendMessage(ChatMessage(role = Role.ASSISTANT, content = "⚠️ 尚未配置模型供应商。请前往「设置 → 模型供应商」点击 + 添加（预设：DeepSeek / 通义 / 智谱 / OpenAI / Ollama 等）。"))
+            appendMessage(ChatMessage(role = Role.ASSISTANT, content = "尚未配置模型供应商。请前往「设置 → 模型供应商」点击 + 添加。"))
             persist()
             return
         }
         val isLocal = cfg.baseUrl.contains("10.0.2.2") || cfg.baseUrl.contains("localhost") || cfg.baseUrl.contains("127.0.0.1")
         if (cfg.apiKey.isBlank() && !isLocal) {
-            appendMessage(ChatMessage(role = Role.ASSISTANT, content = "⚠️ 当前供应商尚未填写 API Key。请前往「设置 → 模型供应商」编辑并填入。"))
+            appendMessage(ChatMessage(role = Role.ASSISTANT, content = "当前供应商尚未填写 API Key。请前往「设置 → 模型供应商」编辑并填入。"))
             persist()
             return
         }
         if (!rootfs.isReady()) {
-            appendMessage(ChatMessage(role = Role.ASSISTANT, content = "⚠️ Ubuntu 环境尚未安装。请先到「设置 → Linux 环境」点击安装（首次需下载约 28MB rootfs）。"))
+            appendMessage(ChatMessage(role = Role.ASSISTANT, content = "Ubuntu 环境尚未安装。请先到「设置 → Linux 环境」点击安装（首次需下载约 28MB rootfs）。"))
             persist()
             return
         }
@@ -265,7 +275,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
         val messages = _messages.value.toMutableList()
         runJob = viewModelScope.launch {
-            engine.run(messages) { event ->
+            engine.run(
+                messages = messages,
+                onSync = { snapshot -> _messages.value = snapshot }
+            ) { event ->
                 when (event) {
                     is AgentEngine.Event.TurnStarted -> _statusText.value = "第 ${event.turn} 轮..."
                     is AgentEngine.Event.TextDelta -> _streamingText.value += event.text
@@ -276,12 +289,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     is AgentEngine.Event.Error -> _statusText.value = "错误：${event.message}"
                 }
             }
-            // flush final streamed content into a message
-            val finalText = _streamingText.value
+            // engine already appended every assistant / tool message via onSync
+            _messages.value = messages.toList()
             _streamingText.value = ""
-            if (finalText.isNotBlank()) {
-                appendMessage(ChatMessage(role = Role.ASSISTANT, content = finalText))
-            }
             _isRunning.value = false
             persist()
             _statusText.value = "就绪"

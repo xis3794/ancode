@@ -77,8 +77,39 @@ class RootfsManager(private val context: Context) {
         currentWorkspace = wsId
         runCatching { workspaceHostDir().mkdirs() }
     }
-
     private val installing = AtomicBoolean(false)
+    private val cancelRequested = AtomicBoolean(false)
+
+    /** Re-detect on-disk rootfs and publish the matching state (call on app start). */
+    fun refreshState() {
+        if (isReady()) {
+            _state.value = State(Status.READY, 1f, "Ubuntu $UBUNTU_VERSION 就绪", rootfsDir)
+        } else if (_state.value.status == Status.READY) {
+            _state.value = State(Status.NOT_INSTALLED)
+        }
+    }
+
+    /**
+     * Startup recovery: the rootfs lives in filesDir and survives restarts, but
+     * the proot binaries are copied out of assets and may be missing (first run
+     * after an update, or a failed install). Restore them so an already
+     * extracted rootfs is not reported as "not installed".
+     */
+    suspend fun restoreIfInstalled() {
+        val extracted = File(rootfsDir, "etc/os-release").exists()
+        if (!extracted) {
+            refreshState()
+            return
+        }
+        if (!prootBin.exists()) ensureProotBinaries()
+        refreshState()
+    }
+
+    /** Ask an in-flight install to stop at the next safe point. */
+    fun cancelInstall() {
+        cancelRequested.set(true)
+    }
+
 
     fun currentStatus(): Status = when {
         isReady() -> Status.READY
@@ -146,6 +177,7 @@ class RootfsManager(private val context: Context) {
     /** Download + verify + extract. [onProgress] receives 0..1. */
     suspend fun install(onProgress: (Float) -> Unit = {}): Boolean {
         if (installing.compareAndSet(false, true)) {
+            cancelRequested.set(false)
             return try {
                 // ALL network / disk IO runs on Dispatchers.IO; the UI thread
                 // only receives state updates via StateFlow (thread-safe).
@@ -195,9 +227,22 @@ class RootfsManager(private val context: Context) {
                 val errors = StringBuilder()
                 var downloaded = false
                 for (mirror in MIRRORS) {
-                    val reason = downloadWithProgress(mirror, tarFile) { p -> onProgress(p * 0.85f) }
+                    if (cancelRequested.get()) {
+                        _state.value = State(Status.NOT_INSTALLED, 0f, "已取消")
+                        return false
+                    }
+                    val host = runCatching { java.net.URI(mirror).host }.getOrNull() ?: mirror
+                    val reason = downloadWithProgress(mirror, tarFile) { p, doneBytes, totalBytes ->
+                        // publish real progress so the UI progress bar moves
+                        _state.value = State(
+                            Status.DOWNLOADING,
+                            p * 0.85f,
+                            "下载中 $host · ${fmtSize(doneBytes)} / ${fmtSize(totalBytes)}"
+                        )
+                        onProgress(p * 0.85f)
+                    }
                     if (reason == null) { downloaded = true; break }
-                    errors.append("\n• ").append(mirror).append(" → ").append(reason)
+                    errors.append("\n- ").append(host).append(" -> ").append(reason)
                 }
                 if (!downloaded) {
                     _state.value = State(
@@ -262,21 +307,47 @@ class RootfsManager(private val context: Context) {
      */
     suspend fun importFromUri(uri: android.net.Uri): String? = withContext(Dispatchers.IO) {
         try {
+            cancelRequested.set(false)
             if (!ensureProotBinaries()) return@withContext "proot 二进制部署失败"
             linuxDir.mkdirs()
             val tarFile = File(linuxDir, ROOTFS_FILENAME)
+            val total = runCatching {
+                context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: -1L
+            }.getOrDefault(-1L)
+            _state.value = State(Status.DOWNLOADING, 0f, "正在导入本地文件...")
             context.contentResolver.openInputStream(uri)?.use { input ->
-                FileOutputStream(tarFile).use { output -> input.copyTo(output) }
+                FileOutputStream(tarFile).use { output ->
+                    val buf = ByteArray(64 * 1024)
+                    var read: Int
+                    var done = 0L
+                    var lastTick = 0L
+                    while (input.read(buf).also { read = it } != -1) {
+                        output.write(buf, 0, read)
+                        done += read
+                        val now = System.currentTimeMillis()
+                        if (now - lastTick > 100) {
+                            lastTick = now
+                            val frac = if (total > 0) (done.toFloat() / total.toFloat()) * 0.5f else 0.2f
+                            _state.value = State(
+                                Status.DOWNLOADING, frac,
+                                "导入中 ${fmtSize(done)}${if (total > 0) " / ${fmtSize(total)}" else ""}"
+                            )
+                        }
+                    }
+                }
             } ?: return@withContext "无法读取所选文件"
-            _state.value = State(Status.EXTRACTING, 0.9f, "校验并解压中...")
+            _state.value = State(Status.EXTRACTING, 0.55f, "SHA256 校验中...")
 
             val actual = sha256(tarFile)
             if (!actual.equals(ROOTFS_SHA256, ignoreCase = true)) {
                 tarFile.delete()
+                _state.value = State(Status.ERROR, 0f, error = "SHA256 校验失败")
                 return@withContext "SHA256 校验失败：所选文件不是官方 ubuntu-base-24.04.3-arm64\n期望 $ROOTFS_SHA256\n实际 $actual"
             }
+            _state.value = State(Status.EXTRACTING, 0.85f, "正在解压 rootfs...")
             val ok = extractTarGz(tarFile, rootfsDir)
             if (!ok) {
+                _state.value = State(Status.ERROR, 0f, error = "解压失败")
                 return@withContext "解压失败（文件可能损坏）"
             }
             tarFile.delete()
@@ -285,6 +356,7 @@ class RootfsManager(private val context: Context) {
             null
         } catch (e: Exception) {
             android.util.Log.e("RootfsManager", "importFromUri failed", e)
+            _state.value = State(Status.ERROR, 0f, error = "导入异常：${e.message}")
             "导入异常：${e.message ?: e.javaClass.simpleName}"
         }
     }
@@ -293,7 +365,11 @@ class RootfsManager(private val context: Context) {
      * Download [url] to [dest]. Returns null on success, or a human-readable
      * failure reason on error (HTTP code / exception message).
      */
-    private fun downloadWithProgress(url: String, dest: File, onProgress: (Float) -> Unit): String? {
+    private fun downloadWithProgress(
+        url: String,
+        dest: File,
+        onProgress: (Float, Long, Long) -> Unit
+    ): String? {
         return try {
             val client = OkHttpClient.Builder()
                 .connectTimeout(25, TimeUnit.SECONDS)
@@ -316,10 +392,18 @@ class RootfsManager(private val context: Context) {
                     val buf = ByteArray(64 * 1024)
                     var read: Int
                     var done = 0L
+                    var lastTick = 0L
                     while (input.read(buf).also { read = it } != -1) {
+                        if (cancelRequested.get()) return "已取消"
                         output.write(buf, 0, read)
                         done += read
-                        if (total > 0) onProgress((done.toFloat() / total.toFloat()) * 0.85f)
+                        // throttle state updates to ~10/s to avoid recomposition storms
+                        val now = System.currentTimeMillis()
+                        if (now - lastTick > 100 || done == total) {
+                            lastTick = now
+                            val frac = if (total > 0) done.toFloat() / total.toFloat() else 0f
+                            onProgress(frac, done, total)
+                        }
                     }
                 }
             }
@@ -328,6 +412,12 @@ class RootfsManager(private val context: Context) {
             dest.delete()
             e.message ?: e.javaClass.simpleName
         }
+    }
+
+    private fun fmtSize(bytes: Long): String = when {
+        bytes <= 0 -> "?"
+        bytes >= 1024 * 1024 -> "%.1fMB".format(bytes / 1024.0 / 1024.0)
+        else -> "${bytes / 1024}KB"
     }
 
     /**
@@ -412,6 +502,13 @@ class RootfsManager(private val context: Context) {
                             }
                             applyMode(target, mode, isDir = false)
                             count++
+                            if (count % 100 == 0) {
+                                _state.value = State(
+                                    Status.EXTRACTING,
+                                    (0.85f + 0.15f * (count / 2600f)).coerceAtMost(0.99f),
+                                    "解压中 $count 个文件..."
+                                )
+                            }
                             // data consumed above; skip only padding
                             skipFully(gz, blockAlign(dataLen) - dataLen)
                         }
